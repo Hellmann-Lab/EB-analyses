@@ -1,0 +1,266 @@
+---
+title: "Preprocessing, QC and Filtering"
+output: html_document
+date: "2024-10-16"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/data/share/htp/EBgrant/analysis_scRNA_allRuns/publication_scripts")
+
+library(tidyverse)
+library(Seurat)
+library(cowplot)
+library(scDblFinder)
+library(SingleCellExperiment)
+library(scran)
+library(SingleR)
+library(SummarizedExperiment)
+library(reticulate)
+library(harmony)
+
+source("helper_functions.R")
+
+```
+
+## Load count matrices
+
+Each sample was mapped to four different reference genomes of the included species and corrected for background RNA with CellBender. Here, the background corrected count matrices per reference genome are loaded: 
+
+```{r load_count_matrices}
+load_counts_per_genome <- function(genome){
+  l <- list()
+  for(file in list.files("zenodo/count_matrices_CellBender/", pattern = genome, full.names = T)){
+    name <- sub(paste0(".*", genome, "_(.*?)_filtered.*"), "\\1", file)
+    name <- gsub("d","run3_d",name)
+    print(paste0("Read in corrected count matrix of experiment ", name))
+    l[[name]] <- Read10X_h5(file)
+  }
+  return(l)
+}
+
+### hg38 (human) mapped data
+hg38_cnts <- load_counts_per_genome("hg38")
+### PABv2 (orang) mapped data
+PABv2_cnts <- load_counts_per_genome("PABv2")
+### macFas6 (cyno) mapped data
+macFas6_cnts <- load_counts_per_genome("macFas6")
+### rheMac10 (rhesus) mapped data
+rheMac10_cnts <- load_counts_per_genome("rheMac10")
+```
+
+## Assign cells to species
+
+Following species demultiplexing based on genetic variants each cell is assigned to its species of origin. 
+Create one Seurat object per species & experiment, mapped to the own (liftoff) genome.
+
+```{r species_objects}
+species_assignment <- readRDS("zenodo/species_demultiplexing/species_assignment.RDS")
+
+### human with hg38 mapping 
+seu_list_human <- create_seurat_species(hg38_cnts, "human")
+### orang with PABv2 mapping
+seu_list_orang <- create_seurat_species(PABv2_cnts, "orang")
+### cyno with macFas6 mapping
+seu_list_cyno <- create_seurat_species(macFas6_cnts, "cynomolgus")
+### rhesus with rheMac10 mapping
+seu_list_rhesus <- create_seurat_species(rheMac10_cnts, "rhesus")
+```
+
+Intersect genes across all species (i.e. genes for which liftoff was possible for all reference genomes):
+
+```{r intersect_genes}
+genes_intersect <- Reduce(intersect, 
+                          list(Reduce(intersect,lapply(seu_list_human,rownames)),
+                               Reduce(intersect,lapply(seu_list_orang,rownames)),
+                               Reduce(intersect,lapply(seu_list_cyno,rownames)),
+                               Reduce(intersect,lapply(seu_list_rhesus,rownames))))
+
+seu_list_human <- lapply(seu_list_human, function(x)x[genes_intersect,])
+seu_list_orang <- lapply(seu_list_orang, function(x)x[genes_intersect,])
+seu_list_cyno <- lapply(seu_list_cyno, function(x)x[genes_intersect,])
+seu_list_rhesus <- lapply(seu_list_rhesus, function(x)x[genes_intersect,])
+```
+
+## Cell QC and filtering
+
+General QC metrics (number of UMIs, genes and mitochondrial fraction) for each species & experiment:
+
+```{r QC, fig.width=8, fig.height=10}
+QC_summary <- bind_rows(list(
+  lapply(seu_list_human, function(seu){seu@meta.data}) %>% bind_rows(.id = "experiment"),
+  lapply(seu_list_orang, function(seu){seu@meta.data})%>% bind_rows(.id = "experiment"),
+  lapply(seu_list_cyno, function(seu){seu@meta.data})%>% bind_rows(.id = "experiment"),
+  lapply(seu_list_rhesus, function(seu){seu@meta.data}) %>% bind_rows(.id = "experiment")
+)) %>% 
+  mutate(species = factor(species, levels = c("human","orang","cynomolgus","rhesus")))
+
+plot.QC(QC_summary)
+```
+
+### Cell filtering
+
+Cell QC filters based on visual inspection of QC plots:\
+* Number of genes detected: \>1000\
+* proportion of mitochondrial genes: \<8%
+
+```{r filtering}
+seu_list_human_filt <- lapply(seu_list_human, function(seu){subset(seu, subset =  nFeature_RNA > 1000 & percent.mt < 8)}) 
+seu_list_orang_filt <- lapply(seu_list_orang, function(seu){subset(seu, subset =  nFeature_RNA > 1000 & percent.mt < 8)}) 
+seu_list_cyno_filt <- lapply(seu_list_cyno, function(seu){subset(seu, subset =  nFeature_RNA > 1000 & percent.mt < 8)}) 
+seu_list_rhesus_filt <- lapply(seu_list_rhesus, function(seu){subset(seu, subset =  nFeature_RNA > 1000 & percent.mt < 8)}) 
+```
+
+### Doublet detection
+
+1.  Identify doublets per lane & species and add doublet_score info to metadata
+2.  Remove within-species doublets detected using scDblFinder
+Cross-species doublets were already detected and removed based on genotypes with vireo.
+
+```{r scDblFinder}
+# Calculate expected intra-species doublet rate based on observed inter-species doublet rate
+doublet_rate <- species_assignment %>% 
+  filter(species != "unassigned") %>% 
+  group_by(experiment) %>% 
+  summarize(inter_doublet_rate = sum(species == "doublet") / length(species), 
+            expected_intra_doublet_rate = inter_doublet_rate / sum(unique(species) %in% c("human","orang","cynomolgus","rhesus")))
+
+# vector of expected intra-species doublet rate for each experiment
+doublet_rate_expected <- setNames(doublet_rate$expected_intra_doublet_rate, nm = doublet_rate$experiment)
+
+#### Seurat pre-processing ####
+seu_list_human_filt <- lapply(seu_list_human_filt, seurat_pipeline)
+seu_list_orang_filt <- lapply(seu_list_orang_filt, seurat_pipeline)
+seu_list_cyno_filt <- lapply(seu_list_cyno_filt, seurat_pipeline)
+seu_list_rhesus_filt <- lapply(seu_list_rhesus_filt, seurat_pipeline)
+
+#### Doublet calling within species ####
+for(experiment in names(seu_list_human_filt)){
+  seu_list_human_filt[[experiment]] <- scDbl_pipeline(seu_list_human_filt[[experiment]], dbr_expected = doublet_rate_expected[experiment])
+}
+for(experiment in names(seu_list_orang_filt)){
+  seu_list_orang_filt[[experiment]] <- scDbl_pipeline(seu_list_orang_filt[[experiment]], dbr_expected = doublet_rate_expected[experiment])
+}
+for(experiment in names(seu_list_cyno_filt)){
+  seu_list_cyno_filt[[experiment]] <- scDbl_pipeline(seu_list_cyno_filt[[experiment]], dbr_expected = doublet_rate_expected[experiment])
+}
+for(experiment in names(seu_list_rhesus_filt)){
+  seu_list_rhesus_filt[[experiment]] <- scDbl_pipeline(seu_list_rhesus_filt[[experiment]], dbr_expected = doublet_rate_expected[experiment])
+}
+
+#### Remove doublets ####
+seu_list_human_filt_rmDbl <- lapply(seu_list_human_filt, function(seu){subset(seu, subset =  doubletCall == "singlet")})
+seu_list_orang_filt_rmDbl <- lapply(seu_list_orang_filt, function(seu){subset(seu, subset =  doubletCall == "singlet")})
+seu_list_cyno_filt_rmDbl <- lapply(seu_list_cyno_filt, function(seu){subset(seu, subset =  doubletCall == "singlet")})
+seu_list_rhesus_filt_rmDbl <- lapply(seu_list_rhesus_filt, function(seu){subset(seu, subset =  doubletCall == "singlet")})
+```
+
+
+## Normalization
+
+Count matrices are normalized per experiment with scran:
+
+```{r normalization}
+seu_list_human_norm <- lapply(seu_list_human_filt_rmDbl, scran_norm)
+seu_list_orang_norm <- lapply(seu_list_orang_filt_rmDbl, scran_norm)
+seu_list_cyno_norm <- lapply(seu_list_cyno_filt_rmDbl, scran_norm)
+seu_list_rhesus_norm <- lapply(seu_list_rhesus_filt_rmDbl, scran_norm)
+
+# remove problematic 'cell' column in metadata
+seu_list_human_norm <- lapply(seu_list_human_norm, function(seu){seu$cell <- NULL; return(seu)})
+seu_list_orang_norm <- lapply(seu_list_orang_norm, function(seu){seu$cell <- NULL; return(seu)})
+seu_list_cyno_norm <- lapply(seu_list_cyno_norm, function(seu){seu$cell <- NULL; return(seu)})
+seu_list_rhesus_norm <- lapply(seu_list_rhesus_norm, function(seu){seu$cell <- NULL; return(seu)})
+```
+
+## Preliminary cell type classification
+
+A reference dataset of human embryoid bodies (Rhodes et al. 2022, 10.7554/eLife.71361) is used to get a preliminary cell type annotation:
+
+```{r train_classifier}
+# load Rhodes et al. data
+# the data loaded here can be downloaded from https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE178274
+rhodes <- Read10X("Rhodes_et_al./", gene.column = 1)
+rhodes_info <- read.delim("Rhodes_et_al./GSE178274_cell_metadata.txt", header = T, row.names = 1)
+
+# scran normalization on Rhodes data
+rhodes_seu <- CreateSeuratObject(counts = rhodes, meta.data = rhodes_info)
+rhodes_seu <- scran_norm(rhodes_seu)
+
+# Add cell types labels based on the cluster correspondence shown in Figure 1G of Rhodes et al.
+rhodes_seu@meta.data <- rhodes_seu@meta.data %>% 
+  mutate(celltype = case_when(Seurat_Clusters_res.0.1 == 0 ~ "Pluripotent_Cells",
+                              Seurat_Clusters_res.0.1 == 1 ~ "Early_Ectoderm",
+                              Seurat_Clusters_res.0.1 == 2 ~ "Mesoderm",
+                              Seurat_Clusters_res.0.1 == 3 ~ "Neural_Crest",
+                              Seurat_Clusters_res.0.1 == 4 ~ "Endoderm",
+                              Seurat_Clusters_res.0.1 == 5 ~ "Neurons",
+                              Seurat_Clusters_res.0.1 == 6 ~ "Endothelial_Cells"))
+
+# Intersect genes with our primate EB data
+common_genes <- intersect(genes_intersect, rownames(rhodes_seu))
+
+# Train prediction model
+trained <- trainSingleR(ref = rhodes_seu$RNA@data[common_genes, ], labels = rhodes_seu[["celltype"]][[1]], aggr.ref=TRUE)
+```
+
+The pretrained classifier is used to assign labels to each cell per species: 
+
+```{r classify_cells}
+sR_Rhodes_human <- lapply(seu_list_human_norm, function(query){
+  pred <- classifySingleR(query@assays$RNA@data, trained, assay.type=1)
+  return(as.data.frame(pred))
+})
+
+sR_Rhodes_orang <- lapply(seu_list_orang_norm, function(query){
+  pred <- classifySingleR(query@assays$RNA@data, trained, assay.type=1)
+  return(as.data.frame(pred))
+})
+
+sR_Rhodes_cyno <- lapply(seu_list_cyno_norm, function(query){
+  pred <- classifySingleR(query@assays$RNA@data, trained, assay.type=1)
+  return(as.data.frame(pred))
+})
+
+sR_Rhodes_rhesus <- lapply(seu_list_rhesus_norm, function(query){
+  pred <- classifySingleR(query@assays$RNA@data, trained, assay.type=1)
+  return(as.data.frame(pred))
+})
+```
+
+## Data integration
+
+### Integration per species
+
+Different experiments per species were integrated with scanorama. The resulting Seurat objects per species can be downloaded from Zenodo.
+
+```{r scanorama_integration}
+scanorama_human <- scanorama_integration(seu_list_human_norm) 
+seu_human <- scanorama_to_seurat(seu_list_human_norm, scanorama_human)
+seu_human <- AddMetaData(seu_human, sR_Rhodes_human) # add Rhodes et al. classification
+
+scanorama_orang <- scanorama_integration(seu_list_orang_norm) 
+seu_orang <- scanorama_to_seurat(seu_list_orang_norm, scanorama_orang)
+seu_orang <- AddMetaData(seu_orang, sR_Rhodes_orang) # add Rhodes et al. classification
+
+scanorama_cyno <- scanorama_integration(seu_list_cyno_norm) 
+seu_cyno <- scanorama_to_seurat(seu_list_cyno_norm, scanorama_cyno)
+seu_cyno <- AddMetaData(seu_cyno, sR_Rhodes_cyno) # add Rhodes et al. classification
+
+scanorama_rhesus <- scanorama_integration(seu_list_rhesus_norm) 
+seu_rhesus <- scanorama_to_seurat(seu_list_rhesus_norm, scanorama_rhesus)
+seu_rhesus <- AddMetaData(seu_rhesus, sR_Rhodes_rhesus) # add Rhodes et al. classification
+```
+
+### Integration of all species together
+
+To create a combined object with all four species together for exploration, the data were simultaneously integrated across experiments and species with harmony:
+
+```{r harmony_integration}
+seu_integrated_allSpecies <- HarmonyIntegration_seulist(
+  seu_list = list(human = seu_human, cyno = seu_cyno),
+  groups = c("species","experiment")
+)
+```
+
+This integrated Seurat object (still lacking refined cell type annotations) can also be downloaded from Zenodo.
