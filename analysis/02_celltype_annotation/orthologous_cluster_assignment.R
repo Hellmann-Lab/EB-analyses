@@ -49,3 +49,9 @@ run_cluster_merging(seu_file_list = seu_file_list,
                     orth_clusters_out = paste0(output_directory,"/orthologous_clusters.RDS"), 
                     cut_height = 0.1, 
                     outfile = paste0(output_directory,"/orthologous_clusters_merged.RDS"))
+
+
+plot_final_clusters(clustered_seu_list, 
+                    distmat = paste0(output_directory,"/distmat_mean.RDS"),
+                    merged_consensus = merged_consensus_out, 
+                    outfile = plotting_out)

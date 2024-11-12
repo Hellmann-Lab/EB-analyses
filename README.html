@@ -392,17 +392,32 @@ pre code {
 <li>Hierarchical clustering to group similar clusters across species into orthologous clusters</li>
 <li>Merge orthologous clusters with very similar expression profiles</li>
 </ul>
-<p><a href="https://shiny.bio.lmu.de/Cross_Species_CellType/">Shiny app</a></p>
+<p>Furthermore, we provide an interactive <a href="https://shiny.bio.lmu.de/Cross_Species_CellType/">Shiny app</a>, that can be used to explore different parameter choices for the orthologous cell type assignment pipeline, identify and visualize marker gene expression to aid cell type annotation and explore our cross-species dataset of embryoid body differentiation.</p>
 </div>
-<div id="cell-type-specificity-analysis" class="section level3">
-<h3>Cell type specificity analysis</h3>
+<div id="cell-type-specificity-and-expression-conservation" class="section level3">
+<h3>Cell type specificity and expression conservation</h3>
+<p>Scripts to perform the cell type specificity and expression conservation analysis per gene are collected in <code>analysis/03_celltype_specificity</code>.</p>
+<p><code>run_glmgampoi.R</code> is used to estimate distributional characteristics per gene.</p>
+<p><code>analysis_gene_detection.R</code> and <code>run_gene_detection.R</code> are used to determine species- and cell type-specific thresholds, when to call a gene expressed based on the observed expression fraction.</p>
+<p><code>summarize_specificity_and_conservation.R</code> is used to assess the cell type specificity and expression conservation of each gene based on the binarized expression patterns.</p>
 </div>
 <div id="marker-gene-analysis" class="section level3">
 <h3>Marker gene analysis</h3>
+<p>Scripts for marker gene identification and comparison across species can be found in <code>analysis/04_marker_gene_transferability</code>.</p>
+<p><code>run_ziqrank.R</code> and <code>run_seurat_marker.R</code> are used to detect marker genes.</p>
+<p>kNN classification and evaluation is performed with <code>run_predict_marker.R</code> and <code>run_predict_summary.R</code>.</p>
+<p><code>marker_gene_analysis.R</code> contains the comparison of marker gene overlap across species and summarizes the kNN classification results.</p>
 </div>
 </div>
 <div id="figures" class="section level2">
 <h2>Figures</h2>
+<p>Scripts to recreate paper figures in <code>figure_scripts</code>:</p>
+<ul>
+<li><code>Figure1.R</code>: Figure 1DE and related supplementary figure S3</li>
+<li><code>Figure2.R</code>: Figure 2 and related supplementary figures S4-6</li>
+<li><code>Figure3.R</code>: Figure 3 and related supplementary figure S7</li>
+<li><code>Figure4.R</code>: Figure 4 and related supplementary figures S8-9</li>
+</ul>
 </div>
 </div>
 
