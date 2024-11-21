@@ -9,7 +9,7 @@ Code used for the initial processing of the scRNA-seq data per species is collec
 
 - `cellranger`: scripts for alignment of sequencing data to different reference genomes
 - `CellBender.sh`: removal of background RNA
-- `species_demultiplexing`
+- `species_demultiplexing`: scripts to run cellSNP and vireo in order to demultiplex cells pooled from different species.
 - `processing_per_species.Rmd`: Workflow to prepare the count data of each species including the following steps:
   * QC and filtering
   * Doublet detection

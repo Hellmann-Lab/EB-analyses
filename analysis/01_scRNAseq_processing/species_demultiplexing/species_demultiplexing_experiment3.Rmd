@@ -1,0 +1,249 @@
+---
+title: "Species demultiplexing experiment3"
+author: "Philipp Janßen"
+output: html_document
+---
+
+## 1) Initial species assignment
+
+### Genotyping & demultiplexing of species (cellSNP/vireo)
+
+```{bash mmul10_demultiplexing}
+cd /data/home/EBgrant/scRNA_run3/cellSNP
+for SAMPLE in d8_1_1 d8_1_2 d8_2_1 d8_2_2 d16_1 d16_2
+do
+  sbatch run_cellSNP_vireo_hg38_NoIntron.sh $SAMPLE
+done
+```
+
+Results of hg38 based demultiplexing: 
+
+```{r hg38_demult}
+samples = c("hg38_NoIntron_d8_1_1", "hg38_NoIntron_d8_1_2", "hg38_NoIntron_d8_2_1", "hg38_NoIntron_d8_2_2", "hg38_NoIntron_d16_1", "hg38_NoIntron_d16_2")
+
+donor_list <- list()
+for(sample in samples){
+  donor_list[[sample]] <- read.table(paste0("/data/home/EBgrant/scRNA_run3/cellSNP/",sample,"/vireo_NoIntron/donor_ids.tsv"), header = T)
+}
+
+lapply(donor_list, function(x){table(x$donor_id)})
+
+donor_df <- bind_rows(donor_list, .id = "sample")
+
+# Plotting: 
+spec_colors <-        c("#e9ecef","lightgrey", "#B0144F", "#3AA6A6", "#F2A518")
+names(spec_colors) <- c("unassigned","doublet","human","cyno/rhesus", "orang")
+
+donor_df %>% 
+  mutate(species = ifelse(donor_id == "cynomolgus", "cyno/rhesus",donor_id),
+         species = factor(species, levels = c("human", "orang", "cyno/rhesus" ,"doublet", "unassigned"))) %>% 
+  
+  ggplot(aes(x = sample, fill = species))+
+    geom_bar()+
+    coord_flip()+
+    scale_fill_manual(values = spec_colors)+
+    theme_bw()+
+    labs(x = "" , y ="number of cells")
+
+
+# save cell barcodes of cynomolgus assigned cells
+for(sample in names(donor_list)){
+  cellBC <- donor_list[[sample]] %>% 
+    filter(donor_id == "cynomolgus") %>% 
+    pull(cell)
+  
+  write.table(cellBC,paste0("/data/home/EBgrant/scRNA_run3/cellSNP/",sample,"/cyno_cells.txt"), row.names = F, col.names = F, quote = F)
+}
+
+```
+
+
+## 2) Distinguish cyno and rhesus based on mmul10 mapping
+
+Genotype cells from new experiment with variants identified in first experiment:
+Input: bam files (cynomolgus assigned cells only) of lanes 1 and 2 
+       variants from first experiment (early pool)
+Output: genotyping of single cells + unsupervised assingments to donors (vireo)
+
+```{bash test_new}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/
+name=lane1_cyno_rhesus
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run2/map/cellranger/lane1_mmul10/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/BC_lane1_cynomolgus.txt
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/create_reference/cyno_rhesus_variants_mmul10_early.cellSNP/cellSNP.base.vcf.gz
+
+# vireo input ###
+n_donor=2
+OUT_DIR=$workdir/$name.vireo
+
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 5 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -N $n_donor -o $OUT_DIR
+'
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/
+name=lane2_cyno_rhesus
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run2/map/cellranger/lane2_mmul10/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/BC_lane2_cynomolgus.txt
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/create_reference/cyno_rhesus_variants_mmul10_early.cellSNP/cellSNP.base.vcf.gz
+
+# vireo input ###
+n_donor=2
+OUT_DIR=$workdir/$name.vireo
+
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 5 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -N $n_donor -o $OUT_DIR
+'
+```
+
+### Compare donors to reference genome (mmul10)
+
+```{r reference_nucleotide}
+library(Rsamtools)
+library(BSgenome)
+
+samples = c("mmul10_NoIntron_d8_1_1", "mmul10_NoIntron_d8_1_2", "mmul10_NoIntron_d8_2_1", "mmul10_NoIntron_d8_2_2", "mmul10_NoIntron_d16_1", "mmul10_NoIntron_d16_2")
+
+donor_mmul10_list <- list()
+allele_freq_mmul10_list <- list()
+
+for(sample in samples){
+  cellSNP_vcf <- vcfR::read.vcfR(paste0("/data/home/EBgrant/scRNA_run3/cellSNP/", sample, "/cellsnp/cellSNP.base.vcf.gz"))
+  DP <- Matrix::readMM(paste0("/data/home/EBgrant/scRNA_run3/cellSNP/",sample,"/cellsnp/cellSNP.tag.DP.mtx"))
+  AD <- Matrix::readMM(paste0("/data/home/EBgrant/scRNA_run3/cellSNP/",sample,"/cellsnp/cellSNP.tag.AD.mtx"))
+  donor_id <- read.table(paste0("/data/home/EBgrant/scRNA_run3/cellSNP/",sample,"/vireo/donor_ids.tsv"), header = T)
+  
+  colnames(DP) <- donor_id$cell
+  colnames(AD) <- donor_id$cell
+  
+  gt_df <- as.data.frame(cellSNP_vcf@fix) %>% 
+    mutate(AD = rowSums(AD), DP = rowSums(DP))
+  
+  for(donor in grep("donor", unique(donor_id$donor_id), value = T)){
+   gt_df[donor] <- rowSums(AD[,donor_id$donor_id == donor]) / rowSums(DP[,donor_id$donor_id == donor])
+  }
+  
+  gt_df_topPos <- gt_df %>% 
+    filter(abs(donor1 - donor0) > 0.8) %>% 
+    arrange(-DP) %>% 
+    dplyr::slice(1:1000)
+  
+  # Get genome nucleotide
+  fasta_file <- FaFile(file="/data/ngs/genomes/refdata-cellranger-6.1.1/mmul10/fasta/genome.fa")
+  gr1 <- GRanges(gt_df_topPos$CHROM, IRanges(start=as.numeric(gt_df_topPos$POS), end=as.numeric(gt_df_topPos$POS)))
+  refbase <- getSeq(fasta_file, gr1)
+  gt_df_topPos$mmul10_allele <- as.data.frame(refbase)$x
+  
+  gt_df_topPos_long <- gt_df_topPos %>% 
+     pivot_longer(cols = grep("donor", colnames(gt_df_topPos), value = T), values_to = "alt_allele_freq", names_to = "donor") %>% 
+     mutate(mmul10_allele_freq = case_when(REF == mmul10_allele ~ (1-alt_allele_freq),
+                                           ALT == mmul10_allele ~ alt_allele_freq))
+  
+  
+  donor_assignment <- gt_df_topPos_long %>% 
+    group_by(donor) %>% 
+    dplyr::summarize(median_mmul10_allele_freq = median(mmul10_allele_freq),
+              species_mmul10 = ifelse(median_mmul10_allele_freq > 0.7, "rhesus", "cynomolgus"))
+  
+  donor_id <- left_join(donor_id, donor_assignment, by = c("donor_id" ="donor")) %>% 
+    mutate(species_mmul10 = ifelse(!is.na(species_mmul10), species_mmul10, donor_id))
+  gt_df_topPos_long <- left_join(gt_df_topPos_long, donor_assignment)
+  
+  donor_mmul10_list[[sample]] <- donor_id
+  allele_freq_mmul10_list[[sample]] <- gt_df_topPos_long
+}
+
+
+lapply(allele_freq_mmul10_list, function(x){x %>% 
+  group_by(donor) %>% 
+  dplyr::summarize(sum(mmul10_allele_freq > 0.6) / length(mmul10_allele_freq))})
+```
+
+```{r plot_allele_freq, fig.width=10, fig.height=6}
+library(ggbeeswarm)
+species_colors <-        c("#e9ecef","lightgrey", "#B0144F", "#92AEC8", "#3AA6A6", "#F2A518")
+names(species_colors) <- c("unassigned","doublet","human","rhesus","cynomolgus", "orang")
+
+plot_mmul10_alleles <- function(x){
+  ggplot(x, aes(x = donor, y = mmul10_allele_freq, color = species_mmul10))+
+    geom_quasirandom(size = 0.1)+
+    scale_color_manual(values = species_colors, limits = force)+
+    theme_bw()+
+    theme(legend.position = "none")
+    #guides(colour = guide_legend(override.aes = list(size=3)))
+}
+
+plot_grid(plotlist = lapply(allele_freq_mmul10_list, plot_mmul10_alleles),
+          nrow = 2, labels = names(allele_freq_mmul10_list), scale = 0.8)
+
+```
+
+```{r assignment_prop}
+donor_df_mmul10 <- bind_rows(donor_mmul10_list, .id = "sample")
+
+donor_df_mmul10 %>% 
+  mutate(species_mmul10 = factor(species_mmul10, levels = c("rhesus", "cynomolgus","unassigned", "doublet"))) %>% 
+  ggplot(aes(x = sample, fill = species_mmul10))+
+      geom_bar()+
+      coord_flip()+
+      scale_fill_manual(values = species_colors, limits = force)+
+      theme_bw()+
+      labs(x = "" , y ="number of cells")
+
+
+donor_colors <-        c("#e9ecef","lightgrey","red", "lightblue")
+names(donor_colors) <- c("unassigned","doublet","donor0", "donor1")
+
+donor_df_mmul10 %>% 
+  #mutate(species_mmul10 = factor(species_mmul10, levels = c("rhesus", "cynomolgus","unassigned", "doublet"))) %>% 
+  ggplot(aes(x = sample, fill = donor_id))+
+      geom_bar()+
+      coord_flip()+
+      scale_fill_manual(values = donor_colors, limits = force)+
+      theme_bw()+
+      labs(x = "" , y ="number of cells")
+```
+
+```{r final_assignments}
+species_assignment = list()
+
+for(sample in c("d8_1_1", "d8_1_2", "d8_2_1", "d8_2_2", "d16_1", "d16_2")){
+  species_assignment[[sample]] <- donor_list[[paste0("hg38_NoIntron_",sample)]] %>% 
+    left_join(select(donor_mmul10_list[[paste0("mmul10_NoIntron_",sample)]], c("cell", "species_mmul10"))) %>% 
+    mutate(species = ifelse(donor_id == "cynomolgus", species_mmul10, donor_id)) %>% 
+    select(cell, species)
+}
+
+species_assignment_df <- bind_rows(species_assignment, .id = "lane") %>% 
+  mutate(day = word(lane,1,sep = "_"),
+         pool = paste(day,word(lane,2,sep = "_"), sep = "_"))
+
+```
+

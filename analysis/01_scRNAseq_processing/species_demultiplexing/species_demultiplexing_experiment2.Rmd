@@ -1,0 +1,145 @@
+---
+title: "Species demultiplexing experiment2"
+author: "Philipp Janßen"
+output: html_document
+---
+
+## 1) Initial species assignment
+
+### Genotyping & demultiplexing of species (cellSNP/vireo)
+
+```{bash cellSNP_vireo_lane1}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run2/cellSNP/lane1/
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run2/cellSNP/lane1/
+name=lane1_species
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run2/map/cellranger/lane1/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run2/map/cellranger/lane1/outs/filtered_feature_bc_matrix/barcodes.tsv.gz
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/reference_vcf/species_variants.recode.vcf
+
+# vireo input ###
+OUT_DIR=$workdir/$name.vireo
+
+# run cellSNP and vireo
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 10 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -d $REGION_VCF -o $OUT_DIR
+'
+conda deactivate
+```
+
+
+```{bash cellSNP_vireo_lane2}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run2/cellSNP/lane2/
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run2/cellSNP/lane2/
+name=lane2_species
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run2/map/cellranger/lane2/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run2/map/cellranger/lane2/outs/filtered_feature_bc_matrix/barcodes.tsv.gz
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/reference_vcf/species_variants.recode.vcf
+
+# vireo input ###
+n_donor=4
+OUT_DIR=$workdir/$name.vireo
+
+# run cellSNP and vireo
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 10 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -d $REGION_VCF -o $OUT_DIR
+'
+conda deactivate
+```
+
+
+## 2) Distinguish cyno and rhesus based on mmul10 mapping
+
+Genotype cells from new experiment with variants identified in first experiment:
+Input: bam files (cynomolgus assigned cells only) of lanes 1 and 2 
+       variants from first experiment (early pool)
+Output: genotyping of single cells + unsupervised assingments to donors (vireo)
+
+```{bash test_new}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/
+name=lane1_cyno_rhesus
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run2/map/cellranger/lane1_mmul10/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/BC_lane1_cynomolgus.txt
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/create_reference/cyno_rhesus_variants_mmul10_early.cellSNP/cellSNP.base.vcf.gz
+
+# vireo input ###
+n_donor=2
+OUT_DIR=$workdir/$name.vireo
+
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 5 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -N $n_donor -o $OUT_DIR
+'
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/
+name=lane2_cyno_rhesus
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run2/map/cellranger/lane2_mmul10/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run2/cellSNP/cyno_vs_rhesus/BC_lane2_cynomolgus.txt
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/create_reference/cyno_rhesus_variants_mmul10_early.cellSNP/cellSNP.base.vcf.gz
+
+# vireo input ###
+n_donor=2
+OUT_DIR=$workdir/$name.vireo
+
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 5 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -N $n_donor -o $OUT_DIR
+'
+```

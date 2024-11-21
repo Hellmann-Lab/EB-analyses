@@ -1,0 +1,135 @@
+---
+title: "Species demultiplexing experiment1"
+author: "Philipp Janßen"
+output: html_document
+---
+
+## 1) Initial species assignment
+
+### Genotyping & demultiplexing of species (cellSNP/vireo)
+
+Run vireo with the reference vcf from bulk RNA-seq data to distinguish human, orang and macaques (cyno/rhesus):
+
+```{bash vireo_early_3spec}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment
+
+sbatch --wrap='
+workdir=/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment
+name=early_species_3spec
+cellSNP_dir=$workdir/early_species.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/reference_vcf/species_variants.recode.vcf
+OUT_DIR=$workdir/$name.vireo
+
+vireo -c $cellSNP_dir -d $REGION_VCF -o $OUT_DIR'
+```
+
+```{bash vireo_late_3spec}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment
+
+sbatch --wrap='
+workdir=/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment
+name=late_species_3spec
+cellSNP_dir=$workdir/late_species.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/reference_vcf/species_variants.recode.vcf
+OUT_DIR=$workdir/$name.vireo
+
+vireo -c $cellSNP_dir -d $REGION_VCF -o $OUT_DIR'
+```
+
+
+### Assign cells to species
+
+Cell barcodes are saved for each of the 3 species --> can be used for filtering in subsequent steps. 
+
+```{r assign_cells_to_species}
+early_3spec_donor_id <- read.table("/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment/early_species_3spec.vireo/donor_ids.tsv", header = T)
+late_3spec_donor_id <- read.table("/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment/late_species_3spec.vireo/donor_ids.tsv", header = T)
+
+# save assignment
+dir <- "/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment/"
+for(spec in c("human","orang","cynomolgus")){
+  early_3spec_donor_id %>% filter(donor_id == spec) %>% .$cell %>% 
+    write.table(paste0(dir,"BC_early_",spec,".txt"), sep="/t", row.names = F, col.names = F, quote = F)
+}
+for(spec in c("human","orang","cynomolgus")){
+  late_3spec_donor_id %>% filter(donor_id == spec) %>% .$cell %>% 
+    write.table(paste0(dir,"BC_late_",spec,".txt"), sep="/t", row.names = F, col.names = F, quote = F)
+}
+```
+
+
+## 2) Re-assign cynomolgus cells (rhesus/ cyno individuals)
+
+```{bash cyno_ind_early}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/individual_assignment
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/individual_assignment/
+name=early_cyno_individuals_mmul10
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run1/map/cellranger/early_pool_mmul10/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment/BC_early_cynomolgus.txt
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/reference_vcf/cyno_individual_variants.recode.vcf
+
+# vireo input ###
+n_donor=3
+OUT_DIR=$workdir/$name.vireo
+
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 5 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -N $n_donor -d $REGION_VCF -o $OUT_DIR --forceLearnGT --extraDonor=1
+'
+```
+
+```{bash cyno_ind_late}
+cd  /opt/anaconda3/bin/
+source activate
+conda activate vireo
+
+cd /data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/individual_assignment
+
+sbatch --wrap='
+#!/bin/bash
+#SBATCH --mem=20G
+#SBATCH --cpus-per-task=20
+
+workdir=/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/individual_assignment/
+name=late_cyno_individuals_mmul10
+
+# cellSNP input ###
+bam=/data/home/EBgrant/scRNA_run1/map/cellranger/late_pool_mmul10/outs/possorted_genome_bam.bam
+cellBCs=/data/home/EBgrant/scRNA_run1/cellSNP/cellSNP_vireo_output/species_assignment/BC_late_cynomolgus.txt
+cellSNP_dir=$workdir/$name.cellSNP
+REGION_VCF=/data/home/EBgrant/scRNA_run1/cellSNP/reference_vcf/cyno_16K16S07_variants.recode.vcf
+
+# vireo input ###
+n_donor=2
+OUT_DIR=$workdir/$name.vireo
+
+srun mkdir $cellSNP_dir
+
+srun cellsnp-lite -s $bam -b $cellBCs -O $cellSNP_dir -R $REGION_VCF --minMAF 0 --minCOUNT 5 --cellTAG CB --UMItag UB --gzip
+
+srun vireo -c $cellSNP_dir -N $n_donor -d $REGION_VCF -o $OUT_DIR --forceLearnGT --extraDonor=1
+'
+```
