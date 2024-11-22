@@ -2,7 +2,7 @@
 This repository contains the necessary code to reproduce the analysis for the manuscript "Identification and comparison of orthologous cell types from primate embryoid bodies shows limits of marker gene transferability".
 
 ## Analysis
-Raw sequencing files and count matrices are available at [link to GEO]. Processed files and intermediate analysis results can be downloaded from [link to Zenodo].
+Raw sequencing files and count matrices are available at GEO under accession number GSE280441. Processed files and intermediate analysis results can be downloaded from [Zenodo](10.5281/zenodo.14198850).
 
 ### scRNA-seq processing
 Code used for the initial processing of the scRNA-seq data per species is collected in `analysis/01_scRNAseq_processing`:

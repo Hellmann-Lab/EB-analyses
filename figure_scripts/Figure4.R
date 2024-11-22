@@ -1,6 +1,7 @@
 library(tidyverse)
 library(cowplot)
 library(Seurat)
+library(ggupset)
 
 marker_overlap_full <- readRDS("zenodo/marker_gene_analysis/marker_overlap.rds")
 rbo_biotype <- readRDS("zenodo/marker_gene_analysis/rbo_biotype.rds")
@@ -126,7 +127,9 @@ fig4c <- rbo_biotype %>%
 spec_colors <-        c("#B0144F", "#92AEC8", "#3AA6A6", "#F2A518")
 names(spec_colors) <- c("human","rhesus","cyno", "orang")
 
-fig4d <- ggplot(data = F1_macro_bootstrap, aes(x = as.numeric(NoMarkers))) + 
+fig4d <- F1_macro_bootstrap %>% 
+  filter(Biotype == "proteincoding") %>% 
+  ggplot(aes(x = as.numeric(NoMarkers))) + 
   geom_line(aes(x = as.numeric(NoMarkers), y = F1_macro, color = TestSpecies, group = Set), linewidth = 1) +
   geom_ribbon(aes(ymin=CI_low, ymax=CI_high, fill = TestSpecies, group = Set), alpha=0.1)+
   scale_color_manual(values = spec_colors)+
@@ -137,7 +140,7 @@ fig4d <- ggplot(data = F1_macro_bootstrap, aes(x = as.numeric(NoMarkers))) +
   theme(legend.position = 'none') +
   labs(#title = "KNN Classification across Species using human markers \ntrained in human clone 29B5 and tested in other clones", 
     x = " Number of Marker Genes",
-    y = "macro-averaged F1-Score")
+    y = "average F1-Score")
 
 # ** Assemble figure ####
 plot_grid(
@@ -150,6 +153,7 @@ plot_grid(
   nrow = 1, rel_widths = c(1,1.6)
 )
 
+ggsave("Figures/Figure4.pdf", width = 11, height = 8)
 
 
 
@@ -249,3 +253,49 @@ ggplot(crossspecies.perform.ct.data.filt) +
         legend.title = element_blank(),
         axis.text = element_text(size = 10),
         legend.background = element_rect(fill='transparent'))
+
+ggsave("Figures/suppl_figure_9_F1_celltype.pdf", width = 8.3, height = 6.7)
+
+#.................................................................................................................. ####
+# Supplementary Figure S10 ####
+clone_colors <-        c("#D81159", "#871744",  "#E59A10", "#FFBC42", "#218380", "#0F5D2C","#478D76","#A7BED3","#4F628E", "#437983")
+names(clone_colors) <- c("29B5",    "63Ab2.2",  "69A1",    "68A20",   "56A1",    "56B1",    "82A3",  "83D1",  "83Ab1.1","87B1")
+
+p.F1_biotypes <- F1_macro_bootstrap %>% 
+  mutate(TestClone = factor(TestClone, levels = names(clone_colors)),
+         biotype = case_when(Biotype == "proteincoding" ~ "protein coding genes",
+                             Biotype == "tf" ~ "transcription factors")) %>% 
+  ggplot(aes(x = as.numeric(NoMarkers))) + 
+  geom_line(aes(x = as.numeric(NoMarkers), y = F1_macro, color = TestClone, linetype = biotype)) +
+  scale_color_manual(values = clone_colors)+
+  scale_y_continuous(limits = c(0,1))+
+  facet_wrap(.~TestSpecies, nrow = 1) +
+  theme_bw() +
+  theme(legend.position = 'right', strip.text = element_text(size = 13)) +
+  labs(x = " Number of Marker Genes",
+       y = "average F1-Score")
+
+
+# max F1 for protein coding vs TF
+p.F1max_biotypes <- F1_macro_bootstrap %>%
+  mutate(TestClone = factor(TestClone, levels = names(clone_colors))) %>% 
+  group_by(TestClone, Biotype) %>% 
+  summarize(max = max(F1_macro)) %>% 
+  pivot_wider(names_from = Biotype, values_from = max) %>% 
+  
+  ggplot(aes(x = proteincoding, y = tf, color = TestClone))+
+  geom_point(size = 3)+
+  scale_color_manual(values = clone_colors)+
+  xlim(0.5,1)+
+  ylim(0.5,1)+
+  geom_abline(linetype = "dashed")+
+  labs(x = "Maximum F1-score (protein coding genes)",
+       y = "Maximum F1-score (transcription factors)")+
+  theme_bw()+
+  theme(legend.position = "none")
+
+
+plot_grid(p.F1_biotypes, p.F1max_biotypes,
+          nrow = 1, rel_widths = c(1,0.5), labels = c("A","B"))
+
+ggsave("Figures/suppl_figure_10_F1_comparison_tf_proteincoding.pdf", width = 10, height = 4)

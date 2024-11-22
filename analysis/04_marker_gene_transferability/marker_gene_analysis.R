@@ -141,7 +141,7 @@ saveRDS(rbo_biotype, "zenodo/marker_gene_analysis/rbo_biotype.rds")
 
 # 3) kNN classification #####
 sce_filt <- readRDS("zenodo/marker_gene_analysis/sce_filt.rds")
-PerfResCTData <- readRDS(file = "/data/share/htp/EBgrant/Beate/data/output/MarkerSelection/PredictivePerformance/Summary/F1_celltype.rds")
+PerfResCTData <- readRDS(file = "zenodo/marker_gene_analysis/F1_celltype.rds")
 
 crossspecies.perform.ct.data <- PerfResCTData %>% 
   dplyr::filter(MarkerSpecies == "human" &
@@ -150,7 +150,7 @@ crossspecies.perform.ct.data <- PerfResCTData %>%
                   TestSet == "clone" &
                   MarkerLevel == 'all' &
                   MarkerType == 'all' &
-                  Biotype == "all") %>%
+                  Biotype %in% c("proteincoding", "tf")) %>%
   dplyr::filter(grepl("human_29B5_vs_*",Set)) %>% 
   dplyr::filter(NoMarkers %in% as.character(seq(1:30)))
 
@@ -163,36 +163,23 @@ crossspecies.perform.ct.data2 <- crossspecies.perform.ct.data %>%
   mutate(TrainClone = gsub("_vs.*", "", Set), TestClone = gsub(".*vs_","",Set)) %>% 
   left_join(cell_numbers, by = c("Celltype" = "manual_annotation", "TestClone" = "individual"))
 
+
 # filter for cell numbers
 crossspecies.perform.ct.data.filt <- crossspecies.perform.ct.data2 %>% 
   filter(n_cells > 20)
 
-saveRDS(crossspecies.perform.ct.data.filt, "zenodo/marker_gene_analysis/F1_per_clone.rds")
+# save F1 per clone for protein coding genes
+crossspecies.perform.ct.data.filt %>% 
+  filter(Biotype == "proteincoding") %>% 
+  saveRDS("zenodo/marker_gene_analysis/F1_per_clone.rds")
 
-# Function to perform bootstrap resampling for one group
-bootstrap_f1 <- function(data, n_bootstrap = 1000) {
-  bootstrap_means <- replicate(n_bootstrap, {
-    # Resample with replacement from available F1 scores
-    resampled_scores <- sample(data$F1, size = nrow(data), replace = TRUE)
-    # Calculate macro-averaged F1 score for the resampled data
-    mean(resampled_scores)
-  })
-  
-  # Return the mean, variance, and confidence interval of bootstrap samples
-  data.frame(
-    F1_macro = mean(bootstrap_means),
-    variance = var(bootstrap_means),
-    CI_low = quantile(bootstrap_means,0.025),
-    CI_high = quantile(bootstrap_means,0.975))
-}
 
-# Apply bootstrap resampling to each group
-F1_macro_bootstrap <-  crossspecies.perform.ct.data.filt %>% 
-  group_by(TestSpecies,Set, NoMarkers) %>% 
+F1_macro_bootstrap_biotype <-  crossspecies.perform.ct.data.filt %>% 
+  group_by(TestSpecies,Set, NoMarkers, Biotype) %>% 
   nest() %>%
   mutate(bootstrap_results = map(data, ~ bootstrap_f1(.x))) %>%
   unnest_wider(bootstrap_results) %>% 
   mutate(TestSpecies = factor(TestSpecies, levels = c("human", "orang", "cyno", "rhesus")),
          TestClone = gsub(".*_","",Set))
 
-saveRDS(F1_macro_bootstrap, "zenodo/marker_gene_analysis/F1_macro_bootstrap.rds")
+saveRDS(F1_macro_bootstrap_biotype, "zenodo/marker_gene_analysis/F1_macro_bootstrap.rds")

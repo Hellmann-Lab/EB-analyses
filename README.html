@@ -363,14 +363,14 @@ pre code {
 <p>This repository contains the necessary code to reproduce the analysis for the manuscript “Identification and comparison of orthologous cell types from primate embryoid bodies shows limits of marker gene transferability”.</p>
 <div id="analysis" class="section level2">
 <h2>Analysis</h2>
-<p>Raw sequencing files and count matrices are available at [link to GEO]. Processed files and intermediate analysis results can be downloaded from [link to Zenodo].</p>
+<p>Raw sequencing files and count matrices are available at GEO under accession number GSE280441. Processed files and intermediate analysis results can be downloaded from <a href="10.5281/zenodo.14198850">Zenodo</a>.</p>
 <div id="scrna-seq-processing" class="section level3">
 <h3>scRNA-seq processing</h3>
 <p>Code used for the initial processing of the scRNA-seq data per species is collected in <code>analysis/01_scRNAseq_processing</code>:</p>
 <ul>
 <li><code>cellranger</code>: scripts for alignment of sequencing data to different reference genomes</li>
 <li><code>CellBender.sh</code>: removal of background RNA</li>
-<li><code>species_demultiplexing</code></li>
+<li><code>species_demultiplexing</code>: scripts to run cellSNP and vireo in order to demultiplex cells pooled from different species.</li>
 <li><code>processing_per_species.Rmd</code>: Workflow to prepare the count data of each species including the following steps:
 <ul>
 <li>QC and filtering</li>
